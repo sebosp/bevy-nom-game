@@ -1,0 +1,102 @@
+# Format, Clippy and tests, then the native builds of Linux, Windows and macOS, kept as artifacts
+# of the run and attached to a release for the tags `v*`.
+name: Builds
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      # Bevy's system libraries; .cargo/config.toml links with clang and mold.
+      - name: Install the libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev mold clang
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --release
+      - name: Build
+        run: cargo build --release
+      - name: Package
+        run: |
+          mkdir -p bevy-nom-game-linux-x86_64
+          strip -o bevy-nom-game-linux-x86_64/bevy-nom-game target/release/bevy-nom-game
+          cp README.md LICENSE assets/web/favicon.svg bevy-nom-game-linux-x86_64/
+          mkdir bevy-nom-game-linux-x86_64/font-licenses && cp assets/fonts/*.txt bevy-nom-game-linux-x86_64/font-licenses/
+          tar -czf bevy-nom-game-linux-x86_64.tar.gz bevy-nom-game-linux-x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bevy-nom-game-linux-x86_64
+          path: bevy-nom-game-linux-x86_64.tar.gz
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory bevy-nom-game-windows-x86_64
+          Copy-Item target/release/bevy-nom-game.exe, README.md, LICENSE bevy-nom-game-windows-x86_64/
+          Compress-Archive bevy-nom-game-windows-x86_64 bevy-nom-game-windows-x86_64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bevy-nom-game-windows-x86_64
+          path: bevy-nom-game-windows-x86_64.zip
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release
+      - name: Package
+        run: |
+          mkdir -p bevy-nom-game-macos-arm64
+          cp target/release/bevy-nom-game README.md LICENSE bevy-nom-game-macos-arm64/
+          tar -czf bevy-nom-game-macos-arm64.tar.gz bevy-nom-game-macos-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bevy-nom-game-macos-arm64
+          path: bevy-nom-game-macos-arm64.tar.gz
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            bevy-nom-game-linux-x86_64.tar.gz
+            bevy-nom-game-windows-x86_64.zip
+            bevy-nom-game-macos-arm64.tar.gz
