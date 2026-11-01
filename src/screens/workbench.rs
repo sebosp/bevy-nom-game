@@ -1,6 +1,7 @@
 //! The screen of a level, and of the sandbox: the file, the parser, the trace. The parser runs
 //! as it is typed, and the bytes of each variable take its color.
 use bevy::ecs::schedule::SystemCondition;
+use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::input_focus::{AutoFocus, InputFocus};
 use bevy::picking::events::PointerClick;
 use bevy::prelude::*;
@@ -309,6 +310,8 @@ fn spawn_screen(commands: &mut Commands, fonts: &Fonts, bench: &Bench, screen: S
                                         selection_radius: 0.1,
                                     },
                                     AutoFocus,
+                                    // A click focuses the entities with a tab index, and blurs the others.
+                                    TabIndex(0),
                                     Editor,
                                 ));
                             },

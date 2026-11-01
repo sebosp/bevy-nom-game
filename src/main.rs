@@ -62,11 +62,14 @@ mod cli {
 /// - `NG_CODE`: `solution`, `starter`, or the path of a parser to put in the editor;
 /// - `NG_FILE`: a file opened in the sandbox;
 /// - `NG_HEX=1`: the other view of the file, xxd for text, text for binary;
+/// - `NG_TYPE`: keys typed in the editor after the end of the code, `\n` for Enter;
 /// - `NG_SIZE`: the window size, `1440x900` by default.
 ///
 /// Use `XDG_CONFIG_HOME` to keep the saves away from the real ones.
 #[cfg(not(target_arch = "wasm32"))]
 mod snapshot {
+    use bevy::input::ButtonState;
+    use bevy::input::keyboard::{Key, KeyboardInput};
     use bevy::prelude::*;
     use bevy::render::view::screenshot::{Screenshot, save_to_disk};
     use bevy::window::{PrimaryWindow, WindowResolution};
@@ -81,6 +84,7 @@ mod snapshot {
         path: String,
         screen: Screen,
         toggle: bool,
+        typed: String,
     }
 
     pub fn add(app: &mut App) {
@@ -93,7 +97,8 @@ mod snapshot {
             _ => Screen::Menu,
         };
         let toggle = std::env::var("NG_HEX").is_ok_and(|v| v == "1");
-        app.insert_resource(Snapshot { path, screen, toggle }).add_systems(Startup, setup).add_systems(Update, run);
+        let typed = std::env::var("NG_TYPE").unwrap_or_default().replace("\\n", "\n");
+        app.insert_resource(Snapshot { path, screen, toggle, typed }).add_systems(Startup, setup).add_systems(Update, run);
     }
 
     fn setup(
@@ -135,15 +140,40 @@ mod snapshot {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run(
         mut frame: Local<u32>,
+        mut ready_at: Local<Option<f32>>,
+        time: Res<Time<Real>>,
         snapshot: Res<Snapshot>,
         mut next: ResMut<NextState<Screen>>,
         bench: Option<ResMut<Bench>>,
+        mut keys: MessageWriter<KeyboardInput>,
+        window: Single<Entity, With<PrimaryWindow>>,
         mut commands: Commands,
         mut exit: MessageWriter<AppExit>,
     ) {
         *frame += 1;
+        // A key every other frame, pressed then released, as winit sends them.
+        if *frame >= 25 && !snapshot.typed.is_empty() {
+            let i = (*frame - 25) as usize / 2;
+            if let Some(c) = snapshot.typed.chars().nth(i) {
+                let (key_code, logical_key, text) = match c {
+                    '\n' => (KeyCode::Enter, Key::Enter, None),
+                    c => (KeyCode::KeyA, Key::Character(c.to_string().into()), Some(c.to_string().into())),
+                };
+                let pressed = (*frame - 25).is_multiple_of(2);
+                let state = if pressed { ButtonState::Pressed } else { ButtonState::Released };
+                keys.write(KeyboardInput {
+                    key_code,
+                    logical_key,
+                    state,
+                    text: if pressed { text } else { None },
+                    repeat: false,
+                    window: *window,
+                });
+            }
+        }
         if *frame == 5 {
             next.set(snapshot.screen);
         }
@@ -154,10 +184,17 @@ mod snapshot {
             bench.hex = !bench.hex;
             bench.version += 1;
         }
-        if *frame == 45 {
-            commands.spawn(Screenshot::primary_window()).observe(save_to_disk(snapshot.path.clone()));
+        // The screenshot half a second after the typing, the parser has run again by then.
+        let typed_until = 25 + 2 * snapshot.typed.chars().count() as u32;
+        if *frame == typed_until.max(45) {
+            *ready_at = Some(time.elapsed_secs() + 0.5);
         }
-        if *frame > 70 {
+        if ready_at.is_some_and(|at| time.elapsed_secs() >= at) {
+            *ready_at = None;
+            commands.spawn(Screenshot::primary_window()).observe(save_to_disk(snapshot.path.clone()));
+            *frame = 10_000;
+        }
+        if *frame > 10_025 {
             exit.write(AppExit::Success);
         }
     }
